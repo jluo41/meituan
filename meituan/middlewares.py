@@ -6,9 +6,25 @@
 # https://doc.scrapy.org/en/latest/topics/spider-middleware.html
 
 from scrapy import signals
-
+import random
 import base64
+from meituan.settings import USER_AGENTS
 
+
+'''
+class RandomUserAgent(object):
+    """Randomly rotate user agents based on a list of predefined ones"""
+    def __init__(self, agents):
+        self.agents = agents
+    
+    @classmethod
+    def from_crawler(cls, crawler):
+        return cls(crawler.settings.getlist('USER_AGENTS'))
+    
+    def process_request(self, request, spider):
+        #print "**************************" + random.choice(self.agents)
+        request.headers.setdefault('User-Agent', random.choice(self.agents))
+'''
 
 # 代理服务器
 proxyServer = "http://http-dyn.abuyun.com:9020"
@@ -17,19 +33,18 @@ proxyServer = "http://http-dyn.abuyun.com:9020"
 proxyUser = "HR1139M33WFCA43D"
 proxyPass = "362C14DD968141CE"
 
-# for Python2
-# proxyAuth = "Basic " + base64.b64encode(proxyUser + ":" + proxyPass)
-
 # for Python3
-proxyAuth = "Basic " + base64.urlsafe_b64encode(bytes((proxyUser + ":" + proxyPass), "ascii")).decode("utf8")
+proxyAuth = "Basic " + base64.urlsafe_b64encode(bytes((proxyUser + ":" + proxyPass), 
+                                                      "ascii")).decode("utf8")
+
 
 class ABProxyMiddleware(object):
     def process_request(self, request, spider):
         request.meta["proxy"] = proxyServer
-
-        request.headers["Proxy-Authorization"] = proxyAuth           
-
-
+        request.headers["Proxy-Authorization"] = proxyAuth 
+        request.headers['User-Agent'] =  random.choice(USER_AGENTS)
+        # print(request.headers[b'User-Agent'])
+          
 
 class MeituanSpiderMiddleware(object):
     # Not all methods need to be defined. If a method is not defined,
@@ -101,6 +116,7 @@ class MeituanDownloaderMiddleware(object):
         # - or return a Request object
         # - or raise IgnoreRequest: process_exception() methods of
         #   installed downloader middleware will be called
+        # print(request.headers[b'User-Agent'])
         return None
 
     def process_response(self, request, response, spider):

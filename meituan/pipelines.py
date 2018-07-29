@@ -7,20 +7,21 @@
 import os
 from sqlalchemy.orm import sessionmaker
 
+from datetime import datetime
+
 from meituan.items import SubAreaFoodTypeItem, ShopItem, FoodItem, DealListItem, CommentItem, TagItem
 from meituan.models import sdb_connect, mdb_connect, create_table
 from meituan.models import SubAreaFoodType, Shop, Food, DealList, Comment, Tag
-
 from meituan.settings import DB
-
+from meituan.settings import CITYDBNAME
 
 class MeituanPipeline(object):
 
     def __init__(self):
         if DB == 'sqlite':
-            engine = sdb_connect(os.getcwd())
+            engine = sdb_connect(os.getcwd()+'/db', name = CITYDBNAME)
         elif DB == 'mysql':
-            engine = mdb_connect()
+            engine = mdb_connect(name = CITYDBNAME)
         create_table(engine)
         Session = sessionmaker(bind = engine)
         self.session = Session()
@@ -36,7 +37,7 @@ class MeituanPipeline(object):
 
             if subAreaFoodType is not None:
                 # if there is a same item
-                print('\nexits already! <---o---------(-.-) : subAreaFoodType \n')
+                print(datetime.now(), ': exits already! <---o---------(-.-) : subAreaFoodType ')
                 return item
                 # end here
 
@@ -58,50 +59,27 @@ class MeituanPipeline(object):
         # Shop
         elif isinstance(item, ShopItem):
             # to avoid the duplicates
-            sameshop = self.session.query(Shop).filter_by(period= item['period'], 
-                                                          poiId = item['poiId'],
-                                                          status= 1
-                                                          ).first() # same period, same shop, 
-                                                                    # same status 1, 
-                                                                    # don't need to modify anymore
-                                                                    # then pass
-            if sameshop:
-                print('\nexits already! <---o---------(-.-) : ShopItem\n')
-                return item 
-                # end here
 
-            else:
-                # first get its parents
-                subAreaFoodType = self.session.query(SubAreaFoodType).filter_by(url = item['subAreaFoodTypeUrl']).first()
-                del item['subAreaFoodTypeUrl']
-                
-                # get the shop which need to be changed
-                # where the status must be 0
+            if item['status'] == 0:
+
+                sameshop = self.session.query(Shop).filter_by(period= item['period'], 
+                                                              poiId = item['poiId'],
+                                                              ).first() # same period, same shop, 
+                                                                        # same status 1, 
+                                                                        # don't need to modify anymore
+                                                                        # then pass
 
 
-                shop = self.session.query(Shop).filter_by(period = item['period'],
-                                                          poiId  = item['poiId'],
-                                                          status = 0).first()
-
-                if shop is not None:
-                    
-                    assert shop.status == 0
-                    if item['status'] == 0:
-                        print('\nexits already! <---o---------(-.-) : ShopItem\n')
-                        return item 
-                    else:
-                        for i in item:
-                            setattr(shop, i, item[i])
-                        self.session.commit()
-                        print('\nUpdate shop! <---======------(0.0)?!!!\n')
-                        return item 
-
-                        # to update the item of status 0:
-
-
+                if sameshop:
+                    print(datetime.now(), ': exits already! <---o---------(-.-) : ShopItem')
+                    return item 
+                    # end here
                 else:
-                    # nothing exists
+
+                    subAreaFoodType = self.session.query(SubAreaFoodType).filter_by(url = item['subAreaFoodTypeUrl']).first()
                 
+                    del item['subAreaFoodTypeUrl']
+
                     shop = Shop(**item)
 
                     try:
@@ -116,15 +94,35 @@ class MeituanPipeline(object):
                     self.session.commit()
                     return item
 
+
+            elif item['status'] == 1:
+
+                shop = self.session.query(Shop).filter_by(period = item['period'],
+                                                          poiId  = item['poiId'],
+                                                          status = 0).first()
+
+                if shop is not None:
+                    for i in item:
+                        setattr(shop, i, item[i])
+                    self.session.commit()
+                    print(datetime.now(), ': Update shop! <------======------ ~(0.0)//~~!')
+                    return item
+
+                else:
+                    print(datetime.now(), ': Update shop? not. Useless Full ShopItem!!!')
+
+
+
         # Food
         elif isinstance(item, FoodItem):
             samefood = self.session.query(Food).filter_by(period  = item['period'], 
-                                                          food_id = item['food_id']                                                          
+                                                          food_id = item['food_id'] ,
+                                                          poiId   = item['poiId']                                                         
                                                           ).first() # same period, same shop, 
                                                                     
                              
             if samefood is not None:
-                print('\nexits already! <---o---------(-.-) : FoodItem \n')
+                print(datetime.now(), ': exits already! <---o---------(-.-) : FoodItem ')
                 return item 
 
             else:
@@ -148,12 +146,13 @@ class MeituanPipeline(object):
         # DealList
         elif isinstance(item, DealListItem):
             samedealList = self.session.query(DealList).filter_by(period= item['period'], 
-                                                                  dealList_id = item['dealList_id']                                                          
+                                                                  dealList_id = item['dealList_id'] ,
+                                                                  poiId = item['poiId']                                                         
                                                                   ).first() # same period, same shop, 
                                                                     # same status 1, 
                              
             if samedealList is not None:
-                print('\nexits already! <---o---------(-.-) : DealListItem\n')
+                print(datetime.now(), ': exits already! <---o---------(-.-) : DealListItem')
                 return item 
 
             else:
@@ -174,10 +173,10 @@ class MeituanPipeline(object):
                 self.session.commit()
                 return item
 
-
         # other condition
         else:
             return item
+            #pass
 
 
 

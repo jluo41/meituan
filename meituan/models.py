@@ -9,8 +9,8 @@ from sqlalchemy.orm import relationship
 def sdb_connect(basedir, name = 'data'):
     return create_engine('sqlite:///'+os.path.join(basedir, name + '.sqlite'))
 
-def mdb_connect():
-    MySQL_DB = 'mysql+pymysql://root:@localhost:3306/meituan?charset=utf8'
+def mdb_connect(name):
+    MySQL_DB = 'mysql+pymysql://root:@localhost:3306/name?charset=utf8'
     return create_engine(MySQL_DB)
 
 

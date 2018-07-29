@@ -3,6 +3,9 @@
 # See documentation in:
 # http://doc.scrapy.org/en/latest/topics/items.html
 
+import os
+
+import pandas as pd
 from scrapy import Spider
 from scrapy.http import Request
 
@@ -11,12 +14,11 @@ from datetime import datetime
 
 
 
+from meituan.models import sdb_connect, mdb_connect
+
 from meituan.items import SubAreaFoodTypeItem, ShopItem, FoodItem, DealListItem, CommentItem, TagItem
 
-from meituan.settings import PERIOD
-
-
-
+from meituan.settings import PERIOD, CITYDBNAME, SAFLOGFILE, DB
 
 ## some util functions
 
@@ -60,6 +62,7 @@ def getAllSubAreaFoodType(response, city):
 class MeituanSpider(Spider):
 
     period = PERIOD
+    saflogfile = SAFLOGFILE
 
     def parse(self, response):
         SubAreaFoodType = getAllSubAreaFoodType(response, self.city)
@@ -72,7 +75,7 @@ class MeituanSpider(Spider):
 
         for i in SubAreaFoodType:
             meta = {}
-            meta['subAreaFoodType'] = i['subArea'] + '-' + i['foodType']
+            meta['subAreaFoodType'] = i['city']+'\t' + i['area'] + '\t' + i['subArea'] + '\t' + i['foodType']
             yield Request(i['url'], meta = meta, callback =self.parse_subAreaFoodPage)
 
 
@@ -85,26 +88,69 @@ class MeituanSpider(Spider):
             print(response.url)
             return None
 
-        info = json.loads(data)['poiLists']
-        if info['totalCounts']:
-            for shop in info['poiInfos']:
-                shop.pop('dealList')
-                shop['name'] = shop.pop('title')
-                yield ShopItem(timestamp = datetime.now(), status = 0, 
-                               period = self.period,
-                               subAreaFoodTypeUrl = response.url,
-                               url = self.base_url + str(shop['poiId']),
-                               **shop)
-
-            for shop in info['poiInfos']:
-                response.meta['brefRequestshop'] = {i: shop[i] for i in ['frontImg', 'allCommentNum']}
-                response.meta['subAreaFoodTypeUrl'] = response.url
-                yield Request(self.base_url + str(shop['poiId']), meta = response.meta, callback =self.parse_shopPage)
+        try:
+            info = json.loads(data)['poiLists']
+            log = str(info['totalCounts']) + '\t' + response.meta['subAreaFoodType'] + '\t' + self.period + '\n'
+            print(log)
         
+            with open(self.saflogfile, 'a') as f:
+                f.write(log)
+
+            if info['totalCounts']:
+
+                for shop in info['poiInfos']:
+                    shop.pop('dealList')
+                    shop['name'] = shop.pop('title')
+                    yield ShopItem(timestamp = datetime.now(), status = 0, 
+                                   period = self.period,
+                                   subAreaFoodTypeUrl = response.url,
+                                   url = self.base_url + str(shop['poiId']),
+                                   **shop)
+        except:
+            print(json.loads(data)['poiLists'])
+
+
+
+class ShopSpider(Spider):
+    period = PERIOD
+
+    def setEngine(self):
+        if DB == 'sqlite':
+            self.engine = sdb_connect(os.getcwd()+'/db', name = self.citydbname)
+        elif DB == 'mysql':
+            self.engine = mdb_connect(name = self.citydbname)
+
+    def parse(self, response, inside = True):
+        self.setEngine() # then we can get a new self.engine
+        df = pd.read_sql('Select url, frontImg, allCommentNum from Shops where status = 0', self.engine)
+        print('There are', len(df), 'shops left <----- (0.0)/')
+        if inside:
+            for ind, row in df.iterrows():
+                if not ind%500:
+                    print(ind, '\tnew shops have been updated')
+                item = row.to_dict()
+                url = item.pop('url')
+
+                meta = {'brefRequestshop': item } #TODO
+                
+                yield Request(url, meta = meta, callback =self.parse_shopPage)
         else:
-            print('No shops in', response.meta['subAreaFoodType'])
+            for ind, row in df.iterrows():
+                if not ind%500:
+                    print(ind, '\tnew shops have been updated')
+                item = row.to_dict()
+                url = item.pop('url')
 
-        
+                meta = {'brefRequestshop': item } #TODO
+                
+                yield url, meta
+
+        # clear??
+        number = pd.read_sql('Select count(*) from Shops where status = 0', self.engine).values[0][0] 
+        print('Still left:\t', number)
+        #if number.values[0][0] is not 0:
+            #self.parse(self, response)
+ 
 
     def parse_shopPage(self, response):
         # deal shop information
@@ -112,14 +158,36 @@ class MeituanSpider(Spider):
         # food information
         # and
         # dealList information
-        data = response.xpath('//script/text()').extract()[-2].replace('window._appState = ', '')[:-1]
+        # print(response.text)
+        data = response.xpath('//script/text()').extract()#
+        # print(data)
+
+        if len(data) == 0:
+            with open('errors_type1.txt', 'w') as f:
+                f.write(response.text)
+            print(datetime.now(), ':', response.status, '-----> No output ------------------(#.#).orz!')
+            print(datetime.now(), ':', response.url)
+            return None
+        
+        data = data[-2].replace('window._appState = ', '')[:-1]
+        # print(data)
 
         if '"errorMsg":"403"' in data:
-            print('Banned by Meituan!!! No Shop Info!')
-            print(response.url)
+            print(datetime.now(), ':','Banned by Meituan!!! No Shop Info!')
+            print(datetime.now(), ':', response.url)
             return None
 
-        data = json.loads(data)
+        try:
+            data = json.loads(data)
+        except:
+            with open('errors_type2.txt', 'w') as f:
+                f.write(response.text)
+
+            if '验证中心' in response.text:
+                print(datetime.now(), ':','This response is a 验证中心 --------------(#.#).orz!')
+                # print(datetime.now(), ':', response.url)
+            
+            return None
 
         shop = data['detailInfo']
         for i in ['showStatus', 'extraInfos']:
@@ -128,9 +196,9 @@ class MeituanSpider(Spider):
             except:
                 pass
 
+        
         newshop = {**response.meta['brefRequestshop'], **shop }
         yield ShopItem(timestamp = datetime.now(), 
-                       subAreaFoodTypeUrl = response.meta['subAreaFoodTypeUrl'],
                        status = 1, 
                        period = self.period,
                        url = response.url,
@@ -157,18 +225,61 @@ class MeituanSpider(Spider):
                                **dealList)
 
 
+
+
+
+class CommentSpider(Spider):
+    
+    base_url = "http://www.meituan.com/meishi/"
+
+
     def parse_CommentsTags(self, response):
         pass
 
 
 
+
+# SZ
+
 class SZSpider(MeituanSpider):
     name = 'sz'
     city = '深圳'
     start_urls = (
-            "http://sz.meituan.com/meishi",
+            "http://sz.meituan.com/meishi/",
             )
     base_url = "http://www.meituan.com/meishi/"
 
+
+class SZShopSpider(ShopSpider):
+    name = 'sz_shop'
+    city = '深圳'
+    citydbname = CITYDBNAME
+    start_urls = (
+            "http://baidu.com",
+            )
+    base_url = "http://www.meituan.com/meishi/"
+
+
+
+# ZK
+
+class ZKSpider(MeituanSpider):
+    name = 'zk'
+    city = '周口'
+    start_urls = (
+            "http://zk.meituan.com/meishi/",
+            )
+    base_url = "http://www.meituan.com/meishi/"
+
+
+
+class ZKShopSpider(ShopSpider):
+    name = 'zk_shop'
+    city = '周口'
+    citydbname = CITYDBNAME
+    start_urls = (
+            "http://baidu.com",
+            )
+    base_url = "http://www.meituan.com/meishi/"
 
 
